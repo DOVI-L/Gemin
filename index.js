@@ -1,37 +1,46 @@
 const express = require('express');
 const { GoogleGenerativeAI } = require("@google/generative-ai");
+const axios = require('axios'); // תצטרך להתקין: npm install axios
 
 const app = express();
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
-
-// הגדרת המפתח של Gemini (יוגדר כמשתנה סביבה ב-Render)
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
 app.all('/chat', async (req, res) => {
-    // קבלת הטקסט מהמתקשר (בימות המשיח זה מגיע בדרך כלל בפרמטר שאתה מגדיר)
-    const userText = req.query.text || req.body.text || "שלום";
+    // ימות המשיח שולחים את הנתיב להקלטה בפרמטר FileURL
+    const audioUrl = req.query.FileUrl || req.body.FileUrl;
+
+    if (!audioUrl) {
+        return res.send("read=t-לא התקבלה הקלטה");
+    }
 
     try {
-        const model = genAI.getGenerativeModel({ 
-            model: "gemini-1.5-flash",
-            systemInstruction: "ענה בקצרה ובתמציתיות, ללא סימנים מיוחדים, התשובה תוקרא בטלפון."
-        });
+        // 1. הורדת קובץ השמע מימות המשיח
+        const response = await axios.get(audioUrl, { responseType: 'arraybuffer' });
+        const audioBuffer = Buffer.from(response.data).toString('base64');
 
-        const result = await model.generateContent(userText);
+        const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+
+        // 2. שליחת השמע ישירות ל-Gemini
+        const result = await model.generateContent([
+            {
+                inlineData: {
+                    mimeType: "audio/wav", 
+                    data: audioBuffer
+                }
+            },
+            { text: "הקשב להקלטה וענה עליה בקצרה בעברית. אם זו שאלה - ענה עליה. אם זו בקשה - בצע אותה. ענה בטקסט נקי בלבד." },
+        ]);
+
         const responseText = result.response.text();
 
-        // החזרת תשובה בפורמט של ימות המשיח - הקראת טקסט
-        // הקוד אומר למערכת: "הקרא (read) את הטקסט (t) הבא"
+        // 3. החזרת התשובה לימות המשיח
         res.send(`read=t-${responseText.replace(/[^א-ת0-9?. ,]/g, '')}`);
 
     } catch (error) {
         console.error("Error:", error);
-        res.send("read=t-מצטער, חלה שגיאה בעיבוד הנתונים.");
+        res.send("read=t-חלה שגיאה בעיבוד השמע");
     }
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-    console.log(`Server is running on port ${PORT}`);
-});
+app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
